@@ -1,107 +1,174 @@
+from __future__ import annotations as _annotations
+
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 import re as _re
 from xml.etree import ElementTree as ET
 from textwrap import TextWrapper as _TextWrapper
-import pylinks as pl
-from pylinks.exception.api import WebAPIError as _WebAPIError
+
+if _TYPE_CHECKING:
+    from typing import Any
 
 
-class SPDXLicense:
-
-    def __init__(
-        self,
-        license_id: str,
-    ):
-        self._id = license_id
-        self._data: ET.Element = None
-        self._ns = {'': 'http://www.spdx.org/license'}
-        return
-
-    def run(self):
-        self._data = self.get_license()
-
-    @property
-    def xml_url(self) -> str:
-        return f'https://raw.githubusercontent.com/spdx/license-list-data/refs/heads/main/license-list-XML/{self._id}.xml'
-
-    def get_license(self) -> ET.Element:
-        """
-        Takes an SPDX license ID, downloads the license XML, and returns a parsed data structure.
-
-        Parameters:
-            license_id (str): The SPDX license ID (e.g., 'MIT', 'GPL-2.0-or-later').
-
-        Returns:
-            ElementTree.Element: The license element of the parsed XML tree.
-        """
-        # Construct the URL for the raw XML file in the GitHub repository
-        try:
-            data = pl.http.request(self.xml_url, response_type="str")
-        except _WebAPIError as e:
-            raise Exception(f"Error downloading license XML for ID '{self._id}") from e
-        try:
-            root = ET.fromstring(data)
-        except ET.ParseError as e:
-            raise Exception(f"Error parsing XML content for ID '{self._id}'") from e
-        self._data = root.find('spdx:license', self._ns)
-        return self._data
-
-    def fullname(self):
-        return self._data.attrib.get('name')
-
-    def osi_approved(self) -> bool | None:
-        val = self._data.attrib.get('isOsiApproved')
-        return val == 'true'
-
-    def cross_refs(self) -> list[str]:
-        cross_refs = self._data.find('crossRefs', self._ns)
-        if not cross_refs:
-            return []
-        return [ref.text for ref in cross_refs.findall('crossRef', self._ns)]
-
-    def notes(self) -> str:
-        return self._data.find('notes', self._ns).text
-
-    def text(self) -> ET.Element:
-        return self._data.find('text', self._ns)
-
-    def header(self) -> ET.Element:
-        return self._data.find('.//standardLicenseHeader', self._ns)
-
-
-
-class SPDXLicenseTextParser:
+class SPDXLicenseText:
     """
     Parses the <text> element from an SPDX license XML and generates a plain-text version of the license.
 
     Parameters
     ----------
-    text_element : xml.etree.ElementTree.Element
+    text : xml.etree.ElementTree.Element
         The <text> XML element to parse.
+
+
+    References
+    ----------
+    -  official matcher: https://github.com/spdx/spdx-license-matcher
+    -  third-party matcher: https://github.com/MikeMoore63/spdx_matcher
     """
 
-    def __init__(self, text_element: ET.Element):
-        self._text = text_element
-
+    def __init__(self, text: ET.Element):
+        self._text = text
         self._ns_uri = 'http://www.spdx.org/license'
         self._ns = {'': self._ns_uri}
         self._element_processor = {
-            "text": self.process_generic,
-            "titleText": self.process_title_text,
-            "copyrightText": self.process_copyright_text,
-            "standardLicenseHeader": self.process_generic,
-            "list": self.process_list,
-            "p": self.process_p,
-            "br": lambda x: "\n\n",
-            "item": self.process_list_item,
-            "bullet": self.process_generic,
-            "optional": self.process_optional,
-            "alt": self.process_alt,
+            "titleText": self.title_text,
+            "copyrightText": self.copyright_text,
+            "standardLicenseHeader": self.standard_license_header,
+            "list": self.list,
+            "p": self.p,
+            "br": self.br,
+            "item": self.item,
+            "bullet": self.bullet,
+            "optional": self.optional,
+            "alt": self.alt,
         }
+        self._alt: dict = {}
+        return
 
+    def generate(self, alts: dict[str, str] | None = None) -> tuple[Any, Any | None]:
+        """Generate license full text and header.
+
+        Parameters
+        ----------
+        alts : dict[str, int] | None, optional
+            A dictionary specifying choices for <alt> elements. Keys are 'name' attributes,
+            and values are the value to use.
+
+        Returns
+        -------
+        The full text of the license, and the license header text, if present.
+        """
+        self._alt = alts or {}
+        fulltext = self.generate_full(self._text)
+        header = self._text.find('.//standardLicenseHeader', self._ns)
+        notice = (self.generate_notice(header)) if header else None
+        return fulltext, notice
+
+    def process(self, element: ET.Element) -> str:
+        tag = self.clean_tag(element.tag)
+        if tag not in self._element_processor:
+            raise ValueError(f"Unsupported element: {tag}")
+        processor = self._element_processor[tag]
+        return processor(element)
+
+    def get_alt(self, element: ET.Element) -> str:
+        """Process an <alt> element by selecting the appropriate alternative based on `self._alt`.
+
+        Parameters
+        ----------
+        element : xml.etree.ElementTree.Element
+            The <alt> element.
+        """
+        name = element.get('name')
+        match = element.get('match')
+        if not name:
+            raise ValueError("Alt element must have a 'name' attribute")
+        if not match:
+            raise ValueError("Alt element must have a 'match' attribute")
+        text = self._alt.get(name)
+        if not text:
+            return element.text
+        if not _re.match(match, text):
+            raise ValueError(f"Alt element '{name}' does not match '{match}'")
+        return text
+
+    def clean_tag(self, tag: str) -> str:
+        """Strip the namespace URI from XML tag.
+
+        Parameters
+        ----------
+        tag
+            The XML tag with possible namespace.
+
+        Returns
+        -------
+        The tag without namespace.
+        """
+        return tag.removeprefix(f'{{{self._ns_uri}}}')
+
+    @staticmethod
+    def clean_text(text: str) -> str:
+        text_norm = _re.sub(r'\s+', ' ', text)
+        if text_norm == " ":
+            return ""
+        return text_norm
+
+    def generate_full(self, text: ET.Element):
+        ...
+
+    def generate_notice(self, sandard_license_header: ET.Element):
+        ...
+
+    def title_text(self, element: ET.Element):
+        ...
+
+    def copyright_text(self, element: ET.Element):
+        ...
+
+    def standard_license_header(self, element: ET.Element):
+        ...
+
+    def list(self, element: ET.Element):
+        ...
+
+    def p(self, element: ET.Element):
+        ...
+
+    def br(self, element: ET.Element):
+        ...
+
+    def item(self, element: ET.Element):
+        ...
+
+    def bullet(self, element: ET.Element):
+        ...
+
+    def optional(self, element: ET.Element):
+        ...
+
+    def alt(self, element: ET.Element):
+        ...
+
+
+class SPDXLicenseTextPlain(SPDXLicenseText):
+    """Parses the <text> element from an SPDX license XML and generates a plain-text version of the license.
+
+    Parameters
+    ----------
+    text : xml.etree.ElementTree.Element
+        The <text> XML element to parse.
+
+
+    References
+    ----------
+    -  official matcher: https://github.com/spdx/spdx-license-matcher
+    -  third-party matcher: https://github.com/MikeMoore63/spdx_matcher
+    """
+
+    def __init__(self, text: ET.Element):
+        super().__init__(text)
         self._title: str | bool = True
         self._copyright: str | bool = False
         self._include_optional: bool = True
-        self._alt: dict = {}
         self._line_len: int = 88
         self._list_item_indent: int = 1
         self._list_item_vertical_spacing: int = 1
@@ -112,15 +179,14 @@ class SPDXLicenseTextParser:
         self._list_bullet_unordered_char: str = "–"
         self._text_wrapper: _TextWrapper | None = None
         self._curr_bullet_len: int = 0
-        self._alts = []
         return
 
-    def parse(
+    def generate(
         self,
         title: str | bool = True,
         copyright: str | bool = False,
         include_optional: bool = True,
-        alt: dict[str, str] | None = None,
+        alts: dict[str, str] | None = None,
         line_length: int = 88,
         list_item_indent: int = 2,
         list_item_vertical_spacing: int = 2,
@@ -147,7 +213,7 @@ class SPDXLicenseTextParser:
             If a string, the notice is replaced with the custom string, if a notice is present.
         include_optional : bool, optional
             Whether to include <optional> elements in the output, by default True.
-        alt : dict[str, int] | None, optional
+        alts : dict[str, int] | None, optional
             A dictionary specifying choices for <alt> elements. Keys are 'name' attributes,
             and values are the value to use.
         line_length
@@ -162,7 +228,6 @@ class SPDXLicenseTextParser:
         self._title = title
         self._copyright = copyright
         self._include_optional = include_optional
-        self._alt = alt or {}
         self._line_len = line_length
         self._text_wrapper = _TextWrapper(
             width=line_length,
@@ -179,34 +244,23 @@ class SPDXLicenseTextParser:
         self._list_bullet_prefer_default = list_bullet_prefer_default
         self._list_bullet_ordered = list_bullet_ordered
         self._list_bullet_unordered_char = list_bullet_unordered_char
-        fulltext = self.process_element(self._text).strip("\n").rstrip() + "\n"
-        header = self._text.find('.//standardLicenseHeader', self._ns)
-        notice = (self.process_element(header).strip("\n").rstrip() + "\n") if header else None
-        return fulltext, notice
+        fulltext, notice = super().generate(alts)
+        fulltext_cleaned, notice_cleaned = [
+            f"{text.lstrip("\n").rstrip()}\n" if text else "" for text in (fulltext, notice)
+        ]
+        return fulltext_cleaned, notice_cleaned
 
-    def get_processor(self, tag: str) -> callable:
-        if tag not in self._element_processor:
-            raise ValueError(f"Unsupported element: {tag}")
-        return self._element_processor[tag]
+    def generate_full(self, text: ET.Element):
+        return self.generic(text)
 
-    def process_element(
-        self,
-        element: ET.Element,
-    ) -> str:
-        processor = self.get_processor(self.clean_tag(element.tag))
-        return processor(element)
+    def generate_notice(self, standard_license_header: ET.Element):
+        return self.generic(standard_license_header)
 
-    def process_text(self, text: str) -> str:
-        text_norm = _re.sub(r'\s+', ' ', text)
-        if text_norm == " ":
-            return ""
-        return self.wrap_text(text_norm)
-
-    def process_generic(
+    def generic(
         self,
         element: ET.Element,
         return_list: bool = False,
-    ) -> str:
+    ) -> str | list[str]:
         """Recursively processes an XML element and its children.
 
         Parameters
@@ -236,23 +290,24 @@ class SPDXLicenseTextParser:
         # return "\n\n".join(processed)
         return _re.sub(r'\n\s*\n\s*\n+', "\n\n", "".join(out))
 
-    def process_title_text(self, element: ET.Element) -> str:
+    def title_text(self, element: ET.Element) -> str:
         """Process a <titleText> element."""
         if self._title is False:
             return ""
-        title = self.process_generic(element) if self._title is True else self._title
-        title_lines_centered = [line.strip().center(self._line_len) for line in title.splitlines() if line.strip()]
+        title = self.generic(element) if self._title is True else self._title
+        title_lines_centered = [line.strip().center(self._line_len) for line in title.splitlines() if
+                                line.strip()]
         title_centered = "\n".join(title_lines_centered)
         return f"{title_centered}\n{'=' * self._line_len}\n\n"
 
-    def process_copyright_text(self, element: ET.Element) -> str:
+    def copyright_text(self, element: ET.Element) -> str:
         """Process a <copyrightText> element."""
         if self._copyright is False:
             return ""
-        copyright_text = self.process_generic(element) if self._copyright is True else self._copyright
+        copyright_text = self.generic(element) if self._copyright is True else self._copyright
         return f"\n\n{copyright_text.strip()}\n\n"
 
-    def process_p(self, element: ET.Element) -> str:
+    def p(self, element: ET.Element) -> str:
         """
         Processes a <p> element and appends its text to the output.
 
@@ -266,11 +321,13 @@ class SPDXLicenseTextParser:
             out[-1].append(element.text)
         for child in element:
             tag_name = self.clean_tag(child.tag)
-            if tag_name != "bullet" and tag_name not in self._element_processor:
+            if tag_name not in self._element_processor:
                 raise ValueError(f"Unsupported element: {tag_name}")
             if tag_name == "br":
                 out.append([])
             elif tag_name != "bullet":
+                # Sometimes the <bullet> for <item> is placed inside a <p> element of that item.
+                # Here we ignore the <bullet> element since `item()` will handle it.
                 content = self._element_processor[tag_name](child)
                 if content:
                     out[-1].append(content)
@@ -286,7 +343,7 @@ class SPDXLicenseTextParser:
             paragraphs.append(self.wrap_text(paragraph_normalized))
         return f"\n\n{"\n\n".join(paragraphs)}\n\n"
 
-    def process_list(self, elem: ET.Element) -> str:
+    def list(self, elem: ET.Element) -> str:
         """
         Processes a <list> element containing <item> elements.
 
@@ -304,15 +361,16 @@ class SPDXLicenseTextParser:
             tag = self.clean_tag(child.tag)
             if tag != 'item':
                 raise ValueError(f"List element should only contain item elements, not {tag}")
-            item_str = self.process_list_item(child, idx)
-            item_str_indented = "\n".join([f"{' ' * self._list_indent}{line}" for line in item_str.splitlines()])
+            item_str = self.item(child, idx)
+            item_str_indented = "\n".join(
+                [f"{' ' * self._list_indent}{line}" for line in item_str.splitlines()])
             items.append(item_str_indented)
         self._current_list_nesting -= 1
         newlines = max(1, self._list_item_vertical_spacing) * "\n"
         list_str = newlines.join(items)
         return f"{newlines}{list_str}{newlines}"
 
-    def process_list_item(self, elem: ET.Element, idx: int) -> str:
+    def item(self, elem: ET.Element, idx: int) -> str:
         bullet_elems = elem.findall("./bullet", self._ns) + elem.findall("./p/bullet", self._ns)
         if len(bullet_elems) > 1:
             raise ValueError("Item element should contain at most one bullet element")
@@ -334,7 +392,7 @@ class SPDXLicenseTextParser:
         for child in elem:
             tag = self.clean_tag(child.tag)
             if tag != 'bullet':
-                child_str = self.process_element(child)
+                child_str = self.process(child)
                 if child_str:
                     content.append(child_str.lstrip(" "))
             if child.tail:
@@ -351,7 +409,7 @@ class SPDXLicenseTextParser:
         self._curr_bullet_len -= len(bullet)
         return wrapped
 
-    def process_optional(self, element: ET.Element) -> str:
+    def optional(self, element: ET.Element) -> str:
         """
         Processes an <optional> element based on the include_optional flag.
 
@@ -362,9 +420,9 @@ class SPDXLicenseTextParser:
         """
         if not self._include_optional:
             return ""
-        return self.process_generic(element)
+        return self.generic(element)
 
-    def process_alt(self, element: ET.Element) -> str:
+    def alt(self, element: ET.Element) -> str:
         """Process an <alt> element by selecting the appropriate alternative based on `self._alt`.
 
         Parameters
@@ -372,19 +430,16 @@ class SPDXLicenseTextParser:
         element : xml.etree.ElementTree.Element
             The <alt> element.
         """
-        name = element.get('name')
-        match = element.get('match')
-        if not name:
-            raise ValueError("Alt element must have a 'name' attribute")
-        if not match:
-            raise ValueError("Alt element must have a 'match' attribute")
-        self._alts.append({"name": name, "match": match, "text": element.text})
-        text = self._alt.get(name)
-        if not text:
-            return element.text
-        if not _re.match(match, text):
-            raise ValueError(f"Alt element '{name}' does not match '{match}'")
-        return text
+        return super().get_alt(element)
+
+    def br(self, element: ET.Element) -> str:
+        return "\n\n"
+
+    def process_text(self, text: str) -> str:
+        text_norm = _re.sub(r'\s+', ' ', text)
+        if text_norm == " ":
+            return ""
+        return self.wrap_text(text_norm)
 
     def wrap_text(self, text: str) -> str:
         """Wrap text to the specified line length, preserving indentation.
@@ -404,20 +459,6 @@ class SPDXLicenseTextParser:
         wrapped = self._text_wrapper.fill(text)
         return wrapped
 
-    def clean_tag(self, tag: str) -> str:
-        """Strip the namespace URI from XML tag.
-
-        Parameters
-        ----------
-        tag
-            The XML tag with possible namespace.
-
-        Returns
-        -------
-        The tag without namespace.
-        """
-        return tag.removeprefix(f'{{{self._ns_uri}}}')
-
-
-def get_all_licenses() -> dict:
-    return pl.http.request("https://spdx.org/licenses/licenses.json", response_type="json")
+    def bullet(self, element: ET.Element) -> str:
+        # This will be only called when a <bullet> element is defined outside of an <item>, which is not allowed.
+        raise ValueError("Found a <bullet> element outside of <item> elements.")

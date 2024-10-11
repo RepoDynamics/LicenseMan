@@ -1,0 +1,2 @@
+- Notify SPDX about mismatches and missing info in license data (build db and run verification)
+- Notify PyPA trove-classifiers about LicenseMan (https://github.com/pypa/trove-classifiers/issues/17)

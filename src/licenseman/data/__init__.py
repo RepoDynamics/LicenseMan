@@ -5,11 +5,12 @@ from __future__ import annotations as _annotations
 from pathlib import Path as _Path
 
 import pkgdata as _pkgdata
+import pyserials as _ps
 
-__all__ = ["get"]
+__all__ = ["get_filepath"]
 
 
-def get(relative_path: str) -> _Path:
+def get_filepath(relative_path: str) -> _Path:
     """Get the absolute path to a package data file.
 
     Parameters
@@ -27,3 +28,10 @@ def get(relative_path: str) -> _Path:
             path_absolute=filepath,
         )
     return filepath
+
+
+def spdx_to_trove_mapping() -> dict[str, str]:
+    """Get the SPDX to Trove classifier mapping."""
+    rel_path = "spdx/trove_classifiers.yaml"
+    abs_path = get_filepath(rel_path)
+    return _ps.read.yaml_from_file(abs_path)
