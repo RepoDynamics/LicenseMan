@@ -17,7 +17,7 @@ class SPDXLicenseList:
         return self._data["licenses"]
 
     @property
-    def license_ids(self) -> list[str]:
+    def ids(self) -> list[str]:
         """List of SPDX license IDs."""
         return list(self._map.keys())
 

@@ -49,10 +49,10 @@ class SPDXLicense:
         self._xml: _ElementTree.Element = root.find('license', self._ns)
         self._data: dict = data
         if verify:
-            self._check_integrity()
+            self.verify()
         return
 
-    def _check_integrity(self):
+    def verify(self):
 
         def log(key_json: str, missing_in: Literal["xml", "json"], data: Any, key_xml: str | None = None):
             if key_xml is None:
@@ -150,8 +150,79 @@ class SPDXLicense:
         cross_refs()
         return
 
-    def generate_text(self) -> str:
-        return
+    def generate_text(
+        self,
+        title: str | bool = True,
+        copyright: str | bool = False,
+        optionals: bool = True,
+        alts: dict[str, str] | None = None,
+        line_length: int = 88,
+        list_indent: int = 2,
+        list_item_indent: int = 1,
+        list_item_vertical_spacing: int = 2,
+        list_bullet_prefer_default: bool = True,
+        list_bullet_ordered: bool = True,
+        list_bullet_unordered_char: str = "–",
+        heading_char: str = "=",
+        subheading_char: str = "–",
+    ) -> tuple[str, str | None]:
+        """Generate plain-text license.
+
+        Parameters
+        ----------
+        title
+            Determines how to treat the license title, if any.
+            Since the title is [optional](https://spdx.github.io/spdx-spec/v3.0.1/annexes/license-matching-guidelines-and-templates/#license-name-or-title)
+            and not used in matching, it can be omitted or replaced with a custom title.
+            If True, the title is included as-is. If False, the title is omitted.
+            If a string, the title is replaced with the custom string, if a title is present.
+        copyright
+            Determines how to treat the copyright notice, if any.
+            Since the copyright notice is [optional](https://spdx.github.io/spdx-spec/v3.0.1/annexes/license-matching-guidelines-and-templates/#copyright-notice)
+            and not used in matching, it can be omitted or replaced with a custom notice.
+            If True, the notice is included as-is. If False, the notice is omitted.
+            If a string, the notice is replaced with the custom string, if a notice is present.
+        optionals : bool, optional
+            Whether to include <optional> elements in the output, by default True.
+        alts : dict[str, int] | None, optional
+            A dictionary specifying choices for <alt> elements. Keys are 'name' attributes,
+            and values are the value to use.
+        line_length
+            The maximum line length for the plain-text output.
+        list_indent
+            The number of spaces separating list items from the left margin.
+        list_item_indent
+            The number of spaces separating list items from the bullet character.
+        list_item_vertical_spacing
+            The number of newlines separating list items.
+        list_bullet_prefer_default
+            Whether to use the license's default bullet character or number for list items, if available.
+        list_bullet_ordered
+            Whether to use numbered (True) or bulleted (False) list items,
+            if no default bullet is available or `list_bullet_prefer_default` is False.
+        list_bullet_unordered_char
+            The character to use for unordered list items if `list_bullet_ordered` is False.
+
+        Returns
+        -------
+        The plain-text version of the license
+        plus the license header text, if present.
+        """
+        return SPDXLicenseTextPlain(text=self.text_xml).generate(
+            title=title,
+            copyright=copyright,
+            optionals=optionals,
+            alts=alts,
+            line_length=line_length,
+            list_indent=list_indent,
+            list_item_indent=list_item_indent,
+            list_item_vertical_spacing=list_item_vertical_spacing,
+            list_bullet_prefer_default=list_bullet_prefer_default,
+            list_bullet_ordered=list_bullet_ordered,
+            list_bullet_unordered_char=list_bullet_unordered_char,
+            title_separator=heading_char,
+            subtitle_separator=subheading_char,
+        )
 
     @property
     def raw_data(self) -> dict:
@@ -352,3 +423,9 @@ class SPDXLicense:
         """General comments about the license, if any."""
         elem = self._xml.find('notes', self._ns)
         return elem.text if elem is not None else None
+
+    def __repr__(self):
+        return f"<SPDXLicense {self.id}>"
+
+    def __str__(self):
+        return self.text_plain

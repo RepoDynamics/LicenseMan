@@ -5,13 +5,17 @@ import re as _re
 from xml.etree import ElementTree as ET
 from textwrap import TextWrapper as _TextWrapper
 
+import mdit as _mdit
+
 if _TYPE_CHECKING:
-    from typing import Any
+    from typing import Any, Literal
 
 
 class SPDXLicenseText:
-    """
-    Parses the <text> element from an SPDX license XML and generates a plain-text version of the license.
+    """Base text generator for SPDX licenses.
+
+    This parses the <text> element from an SPDX license XML.
+    Subclasses should implement the missing methods to generate the full text and header.
 
     Parameters
     ----------
@@ -42,9 +46,14 @@ class SPDXLicenseText:
             "alt": self.alt,
         }
         self._alt: dict = {}
+        self._optionals: bool | list[bool] = True
         return
 
-    def generate(self, alts: dict[str, str] | None = None) -> tuple[Any, Any | None]:
+    def generate(
+        self,
+        alts: dict[str, str] | None = None,
+        optionals: bool | list[bool] = True,
+    ) -> tuple[Any, Any]:
         """Generate license full text and header.
 
         Parameters
@@ -58,6 +67,7 @@ class SPDXLicenseText:
         The full text of the license, and the license header text, if present.
         """
         self._alt = alts or {}
+        self._optionals = optionals
         fulltext = self.generate_full(self._text)
         header = self._text.find('.//standardLicenseHeader', self._ns)
         notice = (self.generate_notice(header)) if header else None
@@ -86,7 +96,7 @@ class SPDXLicenseText:
             raise ValueError("Alt element must have a 'match' attribute")
         text = self._alt.get(name)
         if not text:
-            return element.text
+            return element.text or ""
         if not _re.match(match, text):
             raise ValueError(f"Alt element '{name}' does not match '{match}'")
         return text
@@ -112,63 +122,65 @@ class SPDXLicenseText:
             return ""
         return text_norm
 
+    @staticmethod
+    def element_has_text(element: ET.Element) -> bool:
+        return bool(element.text and element.text.strip())
+
+    @staticmethod
+    def element_has_tail(element: ET.Element) -> bool:
+        return bool(element.tail and element.tail.strip())
+
     def generate_full(self, text: ET.Element):
-        ...
+        raise NotImplementedError
 
     def generate_notice(self, sandard_license_header: ET.Element):
-        ...
+        raise NotImplementedError
 
     def title_text(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def copyright_text(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def standard_license_header(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def list(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def p(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def br(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def item(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def bullet(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def optional(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
     def alt(self, element: ET.Element):
-        ...
+        raise NotImplementedError
 
 
 class SPDXLicenseTextPlain(SPDXLicenseText):
-    """Parses the <text> element from an SPDX license XML and generates a plain-text version of the license.
+    """Plain-text generator for SPDX licenses.
 
     Parameters
     ----------
     text : xml.etree.ElementTree.Element
         The <text> XML element to parse.
-
-
-    References
-    ----------
-    -  official matcher: https://github.com/spdx/spdx-license-matcher
-    -  third-party matcher: https://github.com/MikeMoore63/spdx_matcher
     """
 
     def __init__(self, text: ET.Element):
         super().__init__(text)
         self._title: str | bool = True
         self._copyright: str | bool = False
-        self._include_optional: bool = True
+        self._optionals: bool | list[bool] = True
         self._line_len: int = 88
         self._list_item_indent: int = 1
         self._list_item_vertical_spacing: int = 1
@@ -179,23 +191,32 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         self._list_bullet_unordered_char: str = "–"
         self._text_wrapper: _TextWrapper | None = None
         self._curr_bullet_len: int = 0
+        self._title_centered: bool = True
+        self._title_separator_full_line: bool = True
+        self._title_separator: str = "="
+        self._subtitle_separator: str = "–"
+        self._count_optional = 0
         return
 
     def generate(
         self,
         title: str | bool = True,
         copyright: str | bool = False,
-        include_optional: bool = True,
+        optionals: bool | list[bool] = True,
         alts: dict[str, str] | None = None,
         line_length: int = 88,
+        list_indent: int = 3,
         list_item_indent: int = 2,
         list_item_vertical_spacing: int = 2,
-        list_indent: int = 3,
         list_bullet_prefer_default: bool = True,
         list_bullet_ordered: bool = True,
         list_bullet_unordered_char: str = "–",
+        title_centered: bool = True,
+        title_separator_full_line: bool = True,
+        title_separator: Literal["-", "=", "_", "*"] = "=",
+        subtitle_separator: Literal["-", "=", "_", "*"] = "-",
     ) -> tuple[str, str | None]:
-        """Parses the <text> element and generates the plain-text license.
+        """Generate plain-text license.
 
         Parameters
         ----------
@@ -211,23 +232,35 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             and not used in matching, it can be omitted or replaced with a custom notice.
             If True, the notice is included as-is. If False, the notice is omitted.
             If a string, the notice is replaced with the custom string, if a notice is present.
-        include_optional : bool, optional
+        optionals : bool, optional
             Whether to include <optional> elements in the output, by default True.
         alts : dict[str, int] | None, optional
             A dictionary specifying choices for <alt> elements. Keys are 'name' attributes,
             and values are the value to use.
         line_length
             The maximum line length for the plain-text output.
+        list_indent
+            The number of spaces separating list items from the left margin.
         list_item_indent
             The number of spaces separating list items from the bullet character.
+        list_item_vertical_spacing
+            The number of newlines separating list items.
+        list_bullet_prefer_default
+            Whether to use the license's default bullet character or number for list items, if available.
+        list_bullet_ordered
+            Whether to use numbered (True) or bulleted (False) list items,
+            if no default bullet is available or `list_bullet_prefer_default` is False.
+        list_bullet_unordered_char
+            The character to use for unordered list items if `list_bullet_ordered` is False.
+
         Returns
         -------
-        The plain-text version of the license,
-        and the license header text, if present.
+        The plain-text version of the license
+        plus the license header text, if present.
         """
         self._title = title
         self._copyright = copyright
-        self._include_optional = include_optional
+        self._optionals = optionals
         self._line_len = line_length
         self._text_wrapper = _TextWrapper(
             width=line_length,
@@ -238,17 +271,97 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         )
         self._current_list_nesting = 0
         self._curr_bullet_len = 0
+        self._count_optional = 0
         self._list_indent = list_indent
         self._list_item_indent = list_item_indent
         self._list_item_vertical_spacing = list_item_vertical_spacing
         self._list_bullet_prefer_default = list_bullet_prefer_default
         self._list_bullet_ordered = list_bullet_ordered
         self._list_bullet_unordered_char = list_bullet_unordered_char
-        fulltext, notice = super().generate(alts)
-        fulltext_cleaned, notice_cleaned = [
-            f"{text.lstrip("\n").rstrip()}\n" if text else "" for text in (fulltext, notice)
-        ]
-        return fulltext_cleaned, notice_cleaned
+        self._title_centered = title_centered
+        self._title_separator_full_line = title_separator_full_line
+        self._title_separator = title_separator
+        self._subtitle_separator = subtitle_separator
+        fulltext, notice = super().generate(alts=alts, optionals=optionals)
+        return tuple(self.finalize(text) for text in (fulltext, notice))
+
+    def finalize(self, text: str | None) -> str | None:
+        if text is None:
+            return
+        to_wrap_section_indices = []
+        cleaned_sections = [[]]
+        section_breaks = [0]
+        in_break = False
+        found_line = False
+        for line in text.lstrip("\n").rstrip().splitlines():
+            if not line.strip():
+                section_breaks[-1] += 1
+                in_break = True
+                found_line = False
+                continue
+            if in_break:
+                cleaned_sections.append([])
+                section_breaks.append(0)
+                in_break = False
+            line_stripped = line.rstrip()
+            if len(line_stripped) <= self._line_len:
+                if not found_line:
+                    cleaned_sections[-1].append(line_stripped)
+                else:
+                    line_indent = len(line) - len(line.lstrip())
+                    last_line = cleaned_sections[-1][-1]
+                    last_line_indent = len(last_line) - len(last_line.lstrip())
+                    if last_line_indent == line_indent:
+                        cleaned_sections[-1].append(line_stripped)
+                    else:
+                        cleaned_sections.append([line_stripped])
+                        section_breaks.append(0)
+                continue
+            found_line = True
+            if not cleaned_sections[-1]:
+                cleaned_sections[-1].append(line_stripped)
+            else:
+                last_line = cleaned_sections[-1][-1]
+                last_line_indent = len(last_line) - len(last_line.lstrip())
+                current_line_indent = len(line) - len(line.lstrip())
+                if last_line_indent == current_line_indent:
+                    cleaned_sections[-1].append(line_stripped)
+                else:
+                    cleaned_sections.append([line_stripped])
+                    section_breaks.append(0)
+            to_wrap_section_indices.append(len(cleaned_sections) - 1)
+        wrapped_sections = []
+        for idx, section in enumerate(cleaned_sections):
+            if idx in to_wrap_section_indices:
+                wrapped_sections.append(self.wrap_text("\n".join(section)))
+            else:
+                wrapped_sections.append("\n".join(section))
+            wrapped_sections.append("\n" * (section_breaks[idx] + 1))
+        return f"{"".join(wrapped_sections).rstrip()}\n".replace(
+            " .", "."
+        ).replace(
+            " ,", ","
+        ).replace(
+            " :", ":"
+        ).replace(
+            " ;", ";"
+        ).replace(
+            " )", ")"
+        ).replace(
+            " ]", "]"
+        ).replace(
+            " }", "}"
+        ).replace(
+            " !", "!"
+        ).replace(
+            " ?", "?"
+        ).replace(
+            "( ", "("
+        ).replace(
+            "[ ", "["
+        ).replace(
+            "{ ", "{"
+        )
 
     def generate_full(self, text: ET.Element):
         return self.generic(text)
@@ -268,19 +381,60 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         element : xml.etree.ElementTree.Element
             The XML element to process.
         """
+        # If the content begins on the same line as the tag, and has a leading space
+        # (i.e. when first line has content with leading space)
+        # then one space is added to the stripped text to preserve the leading space.
+        # Similarly, if the content ends on the same line as the tag, and has a trailing space,
+        # then one space is added to the end of the stripped text.
+
+        # text_lines = text.splitlines()
+        # space_start = bool(text_lines[0].strip() and text_lines[0].startswith(" ")) * " "
+        # space_end = bool(text_lines[-1].strip() and text_lines[-1].endswith(" ")) * " "
+        # space_normalized_text = _re.sub(r'\s+', ' ', text.strip())
+        # space_normalized_text = f"{space_start}{space_normalized_text}{space_end}"
+        # wrapped_text = self.wrap_text(space_normalized_text)
+        # if space_normalized_text.endswith(" "):
+        #     wrapped_text += " "
+        # return wrapped_text
+
         out = []
-        if element.text:
-            out.append(self.process_text(element.text))
-        for child in element:
+        children = list(element)
+        bullet_content = None
+        for child_idx, child in enumerate(children):
             tag_name = self.clean_tag(child.tag)
             if tag_name not in self._element_processor:
                 raise ValueError(f"Unsupported element: {tag_name}")
             content = self._element_processor[tag_name](child)
             if content:
-                out.append(content)
-            if child.tail:
-                out.append(self.process_text(child.tail))
-        if element.tail:
+                if not bullet_content:
+                    out.append(content)
+                else:
+                    bullet_len = len(bullet_content)
+                    bullet_content = None
+                    self._curr_bullet_len -= bullet_len
+                    content_lines = content.strip("\n").splitlines()
+                    out.append(f"{content_lines[0].strip()}\n")
+                    out.extend([f"{bullet_len * " "}{line}\n" for line in content_lines[1:]])
+                    if self._subtitle_separator and len(content_lines) == 1:
+                        num_chars = len(content_lines[0].strip()) + bullet_len
+                        out.append(f"{self._subtitle_separator * num_chars}\n\n")
+                    else:
+                        out.append("\n\n")
+            if tag_name == "bullet":
+                # There is a bullet element outside of a list item.
+                if self.element_has_tail(child):
+                    if self._subtitle_separator:
+                        num_chars = len(content.strip())
+                        leading_spaces = (len(content) - len(content.lstrip(' '))) * " "
+                        out.append(f"{leading_spaces}{self._subtitle_separator * num_chars}\n\n")
+                else:
+                    # The bullet has no text after it (example: CPL-1.0);
+                    # Add the next element as the list item text.
+                    bullet_content = content
+                    self._curr_bullet_len += len(content)
+        if self.element_has_text(element):
+            out.insert(0, self.process_text(element.text))
+        if self.element_has_tail(element):
             out.append(self.process_text(element.tail))
         if return_list:
             return out
@@ -288,17 +442,36 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         # paragraphs = [paragraph.strip() for paragraph in _re.split(r'\n\s*\n+', full_raw)]
         # processed = [self.wrap_text(paragraph) for paragraph in paragraphs]
         # return "\n\n".join(processed)
-        return _re.sub(r'\n\s*\n\s*\n+', "\n\n", "".join(out))
+        return _re.sub(r'\n\s*\n\s*\n+', "\n\n", "".join(out)) + " "
+
+    def standard_license_header(self, element: ET.Element):
+        return self.generic(element)
 
     def title_text(self, element: ET.Element) -> str:
         """Process a <titleText> element."""
         if self._title is False:
             return ""
         title = self.generic(element) if self._title is True else self._title
-        title_lines_centered = [line.strip().center(self._line_len) for line in title.splitlines() if
-                                line.strip()]
-        title_centered = "\n".join(title_lines_centered)
-        return f"{title_centered}\n{'=' * self._line_len}\n\n"
+        title_lines = []
+        for line in title.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if self._title_separator and all(char in ("-", "=", "_", "*") for char in line):
+                continue
+            if self._title_centered:
+                line = line.center(self._line_len)
+            title_lines.append(line)
+        if self._title_separator:
+            if self._title_separator_full_line:
+                title_lines.append(self._title_separator * self._line_len)
+            else:
+                separator_line = self._title_separator * max(len(line) for line in title_lines)
+                if self._title_centered:
+                    separator_line = separator_line.center(self._line_len)
+                title_lines.append(separator_line)
+        title_lines.append("\n")
+        return "\n".join(title_lines)
 
     def copyright_text(self, element: ET.Element) -> str:
         """Process a <copyrightText> element."""
@@ -306,6 +479,96 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             return ""
         copyright_text = self.generic(element) if self._copyright is True else self._copyright
         return f"\n\n{copyright_text.strip()}\n\n"
+
+    def optional(self, element: ET.Element) -> str:
+        """
+        Processes an <optional> element based on the include_optional flag.
+
+        Parameters
+        ----------
+        element : xml.etree.ElementTree.Element
+            The <optional> element.
+        """
+        include = self._optionals if isinstance(self._optionals, bool) else self._optionals[self._count_optional]
+        self._count_optional += 1
+        if not include:
+            return self.process_text(element.tail or "")
+        return self.generic(element)
+
+    def list(self, elem: ET.Element) -> str:
+        """
+        Processes a <list> element containing <item> elements.
+
+        Parameters
+        ----------
+        elem : xml.etree.ElementTree.Element
+            The <list> element.
+        """
+        self._current_list_nesting += 1
+        if elem.text and elem.text.strip():
+            raise ValueError("List element should not have text content")
+        if self._list_bullet_prefer_default:
+            bullet_elems = elem.findall("./item/bullet", self._ns) + elem.findall("./item/p/bullet", self._ns)
+            max_bullet_width = max([len(bullet.text.strip()) for bullet in bullet_elems], default=0)
+        else:
+            max_bullet_width = len(str(len(elem)))
+        items = []
+        for idx, child in enumerate(elem):
+            tag = self.clean_tag(child.tag)
+            if tag != 'item':
+                raise ValueError(f"List element should only contain item elements, not {tag}")
+            item_str = self.item(child, idx, max_bullet_width=max_bullet_width)
+            item_str_indented = "\n".join(
+                [f"{' ' * self._list_indent}{line}" for line in item_str.splitlines()])
+            items.append(item_str_indented)
+        self._current_list_nesting -= 1
+        newlines = max(1, self._list_item_vertical_spacing) * "\n"
+        list_str = newlines.join(items)
+        return f"{newlines}{list_str}{newlines}"
+
+    def item(self, elem: ET.Element, idx: int, max_bullet_width: int) -> str:
+        bullet_elems = elem.findall("./bullet", self._ns) + elem.findall("./p/bullet", self._ns)
+        if len(bullet_elems) > 1:
+            raise ValueError("Item element should contain at most one bullet element")
+        if len(bullet_elems) == 1:
+            bullet = bullet_elems[0].text.strip() if self._list_bullet_prefer_default else (
+                f"{idx + 1}." if self._list_bullet_ordered else self._list_bullet_unordered_char
+            )
+            bullet_post_space = max_bullet_width + self._list_item_indent - len(bullet)
+            bullet += bullet_post_space * " "
+            subsequent_indent = len(bullet) * " "
+        else:
+            bullet = ""
+            subsequent_indent = ""
+        self._curr_bullet_len += len(bullet)
+        content = []
+        if elem.text:
+            text = self.process_text(elem.text).lstrip()
+            if text:
+                content.append(text)
+        for child in elem:
+            tag = self.clean_tag(child.tag)
+            if tag == 'bullet':
+                if self.element_has_tail(child):
+                    tail = self.process_text(child.tail)
+                    content.append(tail)
+            else:
+                child_str = self.process(child)
+                if child_str:
+                    content.append(child_str.lstrip(" "))
+            # if child.tail:
+            #     tail = self.process_text(child.tail)
+            #     if tail:
+            #         needs_dedent = not content or content[-1].endswith("\n")
+            #         content.append(tail.lstrip() if needs_dedent else tail)
+        content_raw = "".join(content).strip()
+
+        lines = content_raw.splitlines()
+        wrapped = "\n".join(
+            [f"{bullet}{lines[0] if lines else ""}"] + [f"{subsequent_indent}{line}" for line in lines[1:]]
+        )
+        self._curr_bullet_len -= len(bullet)
+        return wrapped
 
     def p(self, element: ET.Element) -> str:
         """
@@ -325,14 +588,14 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
                 raise ValueError(f"Unsupported element: {tag_name}")
             if tag_name == "br":
                 out.append([])
+                if child.tail:
+                    out[-1].append(child.tail)
             elif tag_name != "bullet":
                 # Sometimes the <bullet> for <item> is placed inside a <p> element of that item.
                 # Here we ignore the <bullet> element since `item()` will handle it.
                 content = self._element_processor[tag_name](child)
                 if content:
                     out[-1].append(content)
-            if child.tail:
-                out[-1].append(child.tail)
         if element.tail:
             out[-1].append(element.tail)
 
@@ -341,86 +604,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             paragraph_raw = " ".join(paragraph_components)
             paragraph_normalized = _re.sub(r'\s+', ' ', paragraph_raw).strip()
             paragraphs.append(self.wrap_text(paragraph_normalized))
-        return f"\n\n{"\n\n".join(paragraphs)}\n\n"
-
-    def list(self, elem: ET.Element) -> str:
-        """
-        Processes a <list> element containing <item> elements.
-
-        Parameters
-        ----------
-        elem : xml.etree.ElementTree.Element
-            The <list> element.
-        """
-        self._current_list_nesting += 1
-
-        if elem.text and elem.text.strip():
-            raise ValueError("List element should not have text content")
-        items = []
-        for idx, child in enumerate(elem):
-            tag = self.clean_tag(child.tag)
-            if tag != 'item':
-                raise ValueError(f"List element should only contain item elements, not {tag}")
-            item_str = self.item(child, idx)
-            item_str_indented = "\n".join(
-                [f"{' ' * self._list_indent}{line}" for line in item_str.splitlines()])
-            items.append(item_str_indented)
-        self._current_list_nesting -= 1
-        newlines = max(1, self._list_item_vertical_spacing) * "\n"
-        list_str = newlines.join(items)
-        return f"{newlines}{list_str}{newlines}"
-
-    def item(self, elem: ET.Element, idx: int) -> str:
-        bullet_elems = elem.findall("./bullet", self._ns) + elem.findall("./p/bullet", self._ns)
-        if len(bullet_elems) > 1:
-            raise ValueError("Item element should contain at most one bullet element")
-        if len(bullet_elems) == 1:
-            bullet = bullet_elems[0].text.strip() if self._list_bullet_prefer_default else (
-                f"{idx + 1}." if self._list_bullet_ordered else self._list_bullet_unordered_char
-            )
-            bullet += self._list_item_indent * " "
-            subsequent_indent = len(bullet) * " "
-        else:
-            bullet = ""
-            subsequent_indent = ""
-        self._curr_bullet_len += len(bullet)
-        content = []
-        if elem.text:
-            text = self.process_text(elem.text).lstrip()
-            if text:
-                content.append(text)
-        for child in elem:
-            tag = self.clean_tag(child.tag)
-            if tag != 'bullet':
-                child_str = self.process(child)
-                if child_str:
-                    content.append(child_str.lstrip(" "))
-            if child.tail:
-                tail = self.process_text(child.tail)
-                if tail:
-                    needs_dedent = not content or content[-1].endswith("\n")
-                    content.append(tail.lstrip() if needs_dedent else tail)
-        content_raw = "".join(content).strip()
-
-        lines = content_raw.splitlines()
-        wrapped = "\n".join(
-            [f"{bullet}{lines[0] if lines else ""}"] + [f"{subsequent_indent}{line}" for line in lines[1:]]
-        )
-        self._curr_bullet_len -= len(bullet)
-        return wrapped
-
-    def optional(self, element: ET.Element) -> str:
-        """
-        Processes an <optional> element based on the include_optional flag.
-
-        Parameters
-        ----------
-        element : xml.etree.ElementTree.Element
-            The <optional> element.
-        """
-        if not self._include_optional:
-            return ""
-        return self.generic(element)
+        return f"\n\n{"\n".join(paragraphs)}\n\n"
 
     def alt(self, element: ET.Element) -> str:
         """Process an <alt> element by selecting the appropriate alternative based on `self._alt`.
@@ -430,16 +614,34 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         element : xml.etree.ElementTree.Element
             The <alt> element.
         """
-        return super().get_alt(element)
+        element.text = super().get_alt(element)
+        return self.p(element)
+
+    def bullet(self, element: ET.Element) -> str:
+        # This is only called when the bullet is outside of a list item.
+        if list(element):
+            raise ValueError("Bullet element should not have children")
+        if not self.element_has_text(element):
+            raise ValueError("Bullet element should have text content")
+        bullet = f"{element.text.strip()}{" " * self._list_item_indent}"
+        item = f"{bullet}{element.tail.strip()}" if self.element_has_tail(element) else bullet
+        return f"\n{self.process_text(item)}\n"
 
     def br(self, element: ET.Element) -> str:
-        return "\n\n"
+        if self.element_has_text(element):
+            raise ValueError("BR element should not have text content")
+        if list(element):
+            raise ValueError("BR element should not have children")
+        if self.element_has_tail(element):
+            tail = self.process_text(element.tail)
+        else:
+            tail = ""
+        return f"\n{tail} "
 
     def process_text(self, text: str) -> str:
-        text_norm = _re.sub(r'\s+', ' ', text)
-        if text_norm == " ":
-            return ""
-        return self.wrap_text(text_norm)
+        space_normalized_text = _re.sub(r'\s+', ' ', text.strip())
+        wrapped_text = self.wrap_text(space_normalized_text)
+        return f"{wrapped_text} "
 
     def wrap_text(self, text: str) -> str:
         """Wrap text to the specified line length, preserving indentation.
@@ -459,6 +661,28 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         wrapped = self._text_wrapper.fill(text)
         return wrapped
 
-    def bullet(self, element: ET.Element) -> str:
-        # This will be only called when a <bullet> element is defined outside of an <item>, which is not allowed.
-        raise ValueError("Found a <bullet> element outside of <item> elements.")
+
+class SPDXLicenseTextMD(SPDXLicenseText):
+    """Parses the <text> element from an SPDX license XML and generates a Markdown version of the license.
+
+    Parameters
+    ----------
+    text : xml.etree.ElementTree.Element
+        The <text> XML element to parse.
+    """
+
+    def __init__(self, text: ET.Element):
+        super().__init__(text)
+        return
+
+    def generate(
+        self,
+        alts: dict[str, str] | None = None,
+    ) -> tuple[_mdit.Document, _mdit.Document | None]:
+        """Generate Markdown license.
+
+        Returns
+        -------
+        The Markdown version of the license.
+        """
+        return super().generate(alts)

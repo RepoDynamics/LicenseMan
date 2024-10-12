@@ -21,12 +21,13 @@ def license_db(
         appname="LicenseMan",
     ) / "SPDX_DB",
     force_update: bool = False,
-    verify_updates: bool = True,
+    verify: bool = True,
+    in_memory: bool = False,
 ) -> SPDXLicenseDB:
     db_path = _Path(path)
     db_license_path = db_path / "licenses"
     license_list_ = _get_global_license_list()
-    license_ids = license_list_.license_ids
+    license_ids = license_list_.ids
     if force_update or not db_path.is_dir():
         missing_ids = license_ids
         intro = "Force update is enabled" if force_update else f"SPDX license database not found at {db_path}"
@@ -45,7 +46,12 @@ def license_db(
                 "SPDX License Database Load",
                 f"Loaded database from {db_path}; all {len(license_ids)} license files found."
             )
-            return SPDXLicenseDB(license_list_, db_path)
+            return SPDXLicenseDB(
+                license_list=license_list_,
+                db_path=db_path,
+                in_memory=in_memory,
+                verify=verify,
+            )
         num_missing = len(missing_ids)
         num_available = len(license_ids) - num_missing
         logger.log(
@@ -55,16 +61,25 @@ def license_db(
             f"found {num_missing} missing license files (available: {num_available})."
         )
     db_license_path.mkdir(parents=True, exist_ok=True)
+    licenses = {}
     for missing_id in missing_ids:
         output_path = db_license_path / f"{missing_id}.json"
-        license_data = license(missing_id, verify=verify_updates)
+        license_data = license(missing_id, verify=False if in_memory else verify)
         with open(output_path, "w") as f:
             _json.dump(license_data.raw_data, f)
         logger.success(
             "SPDX License Database Update",
             f"Downloaded '{missing_id}' to 'file://{output_path}'.",
         )
-    return SPDXLicenseDB(license_list_, db_path)
+        if in_memory:
+            licenses[missing_id] = license_data
+    return SPDXLicenseDB(
+        license_list=license_list_,
+        db_path=db_path,
+        in_memory=in_memory,
+        verify=verify,
+        licenses=licenses,
+    )
 
 
 def license_list() -> SPDXLicenseList:
