@@ -59,7 +59,7 @@ def exception_ids(expression: str) -> tuple[list[str], list[str]]:
 
 def _get_ids(expression: str, exception: bool):
     list_ = _spdx._get_global_exception_list() if exception else _spdx._get_global_license_list()
-    ids = list_.ids
+    ids = sorted(list_.ids, key=len, reverse=True)  # Sort by length to match longest IDs first, e.g. 'GPL-3.0-only' before 'GPL-3.0'
     registered = _re.findall(
         rf"({'|'.join(_re.escape(exception_id) for exception_id in ids)})",
         expression

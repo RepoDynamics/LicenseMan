@@ -391,5 +391,5 @@ class SPDXEntry:
         return _ElementTree.tostring(
             optional_copy,
             encoding='unicode',
-            xml_declaration=False,
+            xml_declaration=True,
         )
