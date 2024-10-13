@@ -27,6 +27,7 @@ class SPDXLicenseText:
     ----------
     -  official matcher: https://github.com/spdx/spdx-license-matcher
     -  third-party matcher: https://github.com/MikeMoore63/spdx_matcher
+    - Matching Guidelines: https://spdx.github.io/spdx-spec/v3.0.1/annexes/license-matching-guidelines-and-templates/
     """
 
     def __init__(self, text: ET.Element):

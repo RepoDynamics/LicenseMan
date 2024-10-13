@@ -44,7 +44,7 @@ class SPDXLicenseDB:
             if license_id in self._licenses:
                 yield self._licenses[license_id]
             else:
-                with open(self._db_path / f"licenses/{license_id}.json") as f:
+                with open(self._db_path / f"{license_id}.json") as f:
                     data = _json.load(f)
                 yield _SPDXLicense(
                     data,

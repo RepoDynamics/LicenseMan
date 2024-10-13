@@ -3,22 +3,22 @@ from __future__ import annotations
 import datetime as _dt
 
 
-class SPDXLicenseList:
-    """SPDX license list."""
+class SPDXExceptionList:
+    """SPDX exception list."""
 
     def __init__(self, data: dict):
         self._data = data
-        self._map = {licence["licenseId"]: licence for licence in data["licenses"]}
+        self._map = {exception["licenseExceptionId"]: exception for exception in data["exceptions"]}
         return
 
     @property
-    def licenses(self) -> list[dict]:
-        """List of SPDX licenses."""
-        return self._data["licenses"]
+    def exceptions(self) -> list[dict]:
+        """List of SPDX exceptions."""
+        return self._data["exceptions"]
 
     @property
     def ids(self) -> list[str]:
-        """List of SPDX license IDs."""
+        """List of SPDX exception IDs."""
         return list(self._map.keys())
 
     @property
@@ -43,4 +43,4 @@ class SPDXLicenseList:
         return key in self._map
 
     def __repr__(self):
-        return f"<SPDXLicenseList {self.version}>"
+        return f"<SPDXExceptionList {self.version}>"

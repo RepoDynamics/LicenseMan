@@ -12,19 +12,7 @@ if _TYPE_CHECKING:
     from typing import Literal, Any
 
 
-@_dataclass
-class SPDXLicenseCrossRef:
-    """SPDX License cross reference."""
-    url: str
-    order: int
-    timestamp: _dt.datetime
-    match: str
-    valid: bool
-    live: bool
-    wayback: bool
-
-
-class SPDXLicense:
+class SPDXLicenseException:
     """SPDX License definition.
 
     Parameters
@@ -46,7 +34,7 @@ class SPDXLicense:
         except _ElementTree.ParseError as e:
             raise Exception(f"Error parsing license XML content.") from e
         self._ns: dict = {'': 'http://www.spdx.org/license'}
-        self._xml: _ElementTree.Element = root.find('license', self._ns)
+        self._xml: _ElementTree.Element = root.find('exception', self._ns)
         self._data: dict = data
         if verify:
             self.verify()
@@ -75,32 +63,6 @@ class SPDXLicense:
             )
             return
 
-        def osi_approved():
-            key = "isOsiApproved"
-            xml_raw = self._xml.attrib.get(key)
-            if xml_raw == "true":
-                xml = True
-            elif xml_raw == "false":
-                xml = False
-            else:
-                if xml_raw is not None:
-                    raise Exception(f"Invalid value for '{key}' in XML data: {xml_raw}")
-                xml = None
-            json = self.osi_approved
-            if json != xml:
-                if xml is None:
-                    log(key, "xml", json)
-                    return
-                if json is None:
-                    log(key, "json", xml)
-                    self._data[key] = xml
-                    return
-                raise Exception(
-                    "OSI approved mismatch between XML and JSON data. "
-                    f"XML: {xml}, JSON: {self.osi_approved}"
-                )
-            return
-
         def deprecated_version():
             key = "deprecatedVersion"
             xml = self._xml.attrib.get(key)
@@ -123,28 +85,25 @@ class SPDXLicense:
             xml = sorted(
                 [ref.text.strip() for ref in xml_elem.findall('crossRef', self._ns)]
             ) if xml_elem else []
-            json = sorted([ref["url"] for ref in self._data.get("crossRef", [])])
             json_seealso = sorted(self._data.get("seeAlso", []))
-            if json != json_seealso:
-                raise Exception(
-                    "Cross references mismatch between 'crossRefs' and 'seeAlso' JSON data. ",
-                    f"CrossRefs: {json}, SeeAlso: {json_seealso}"
-                )
-            if json != xml:
+            if json_seealso != xml:
                 if not xml:
-                    log("crossRef", "xml", data=json)
+                    log("seeAlso", "xml", data=json_seealso)
+                    return
+                if not json_seealso:
+                    log("seeAlso", "json", data=xml)
+                    self._data["seeAlso"] = xml
                     return
                 raise Exception(
                     "Cross references mismatch between XML and JSON data. "
-                    f"XML: {xml}, JSON: {json}"
+                    f"XML: {xml}, JSON: {json_seealso}"
                 )
 
-        log_title = f"{self.id} License Verification"
-        if self._data["licenseId"] != self._xml.attrib.get('licenseId'):
-            raise Exception("License ID mismatch between XML and JSON data.")
+        log_title = f"{self.id} License Exception Verification"
+        if self._data["licenseExceptionId"] != self._xml.attrib.get('licenseId'):
+            raise Exception("License exception ID mismatch between XML and JSON data.")
         if self._data["name"] != self._xml.attrib.get('name'):
-            raise Exception("License name mismatch between XML and JSON data.")
-        osi_approved()
+            raise Exception("License exception name mismatch between XML and JSON data.")
         deprecated_version()
         cross_refs()
         return
@@ -153,17 +112,19 @@ class SPDXLicense:
         self,
         title: str | bool = True,
         copyright: str | bool = False,
-        optionals: bool = True,
+        optionals: bool | list[bool] = True,
         alts: dict[str, str] | None = None,
         line_length: int = 88,
-        list_indent: int = 2,
-        list_item_indent: int = 1,
+        list_indent: int = 3,
+        list_item_indent: int = 2,
         list_item_vertical_spacing: int = 2,
         list_bullet_prefer_default: bool = True,
         list_bullet_ordered: bool = True,
         list_bullet_unordered_char: str = "–",
-        heading_char: str = "=",
-        subheading_char: str = "–",
+        title_centered: bool = True,
+        title_separator_full_line: bool = True,
+        title_separator: Literal["-", "=", "_", "*"] = "=",
+        subtitle_separator: Literal["-", "=", "_", "*"] = "-",
     ) -> tuple[str, str | None]:
         """Generate plain-text license.
 
@@ -219,8 +180,10 @@ class SPDXLicense:
             list_bullet_prefer_default=list_bullet_prefer_default,
             list_bullet_ordered=list_bullet_ordered,
             list_bullet_unordered_char=list_bullet_unordered_char,
-            title_separator=heading_char,
-            subtitle_separator=subheading_char,
+            title_centered=title_centered,
+            title_separator_full_line=title_separator_full_line,
+            title_separator=title_separator,
+            subtitle_separator=subtitle_separator,
         )
 
     @property
@@ -231,7 +194,7 @@ class SPDXLicense:
     @property
     def id(self) -> str:
         """SPDX license ID."""
-        return self._data["licenseId"]
+        return self._data["licenseExceptionId"]
 
     @property
     def name(self) -> str:
@@ -241,40 +204,21 @@ class SPDXLicense:
     @property
     def text_plain(self) -> str:
         """Original license text in plain text format."""
-        return self._data["licenseText"]
+        return self._data["licenseExceptionText"]
 
     @property
     def text_html(self) -> str | None:
         """Original license text in HTML format."""
-        return self._data.get("licenseTextHtml")
+        return self._data.get("exceptionTextHtml")
 
     @property
     def text_template(self) -> str | None:
         """License text template."""
-        return self._data.get("standardLicenseTemplate")
+        return self._data.get("licenseExceptionTemplate")
 
     @property
     def text_xml(self) -> _ElementTree.Element:
         return self._xml.find('text', self._ns)
-
-    @property
-    def header_plain(self) -> str | None:
-        """Original license header in plain text format."""
-        return self._data.get("standardLicenseHeader")
-
-    @property
-    def header_html(self) -> str | None:
-        """Original license header in HTML format."""
-        return self._data.get("standardLicenseHeaderHtml")
-
-    @property
-    def header_template(self) -> str | None:
-        """License header template."""
-        return self._data.get("standardLicenseHeaderTemplate")
-
-    @property
-    def header_xml(self) -> _ElementTree.Element:
-        return self._xml.find('.//standardLicenseHeader', self._ns)
 
     @property
     def title_text_xml(self) -> _ElementTree.Element | None:
@@ -327,46 +271,8 @@ class SPDXLicense:
 
     @property
     def url_others(self) -> list[str]:
-        """URLs to other resources related to the license.
-
-        This is a list of URLs identical to `cross_refs`.
-        """
-        return self._data.get("seeAlso", [])
-
-    @property
-    def cross_refs(self) -> list[SPDXLicenseCrossRef]:
         """URLs to license resources, if any."""
-        return [
-            SPDXLicenseCrossRef(
-                url=ref["url"],
-                order=ref["order"],
-                timestamp=_dt.datetime.strptime(ref["timestamp"], "%Y-%m-%dT%H:%M:%SZ"),
-                match=ref["match"],
-                valid=ref["isValid"],
-                live=ref["isLive"],
-                wayback=ref["isWayBackLink"]
-            ) for ref in self._data.get("crossRef", [])
-        ]
-
-    @property
-    def osi_approved(self) -> bool:
-        """Whether the license is OSI approved.
-
-        Returns
-        -------
-        A boolean, or `None` if the value is not defined in the data.
-        """
-        return self._data["isOsiApproved"]
-
-    @property
-    def fsf_libre(self) -> bool | None:
-        """Whether the license is FSF approved.
-
-        Returns
-        -------
-        A boolean, or `None` if the value is not defined in the data.
-        """
-        return self._data.get("isFsfLibre")
+        return self._data.get("seeAlso", [])
 
     @property
     def deprecated(self) -> bool:
@@ -432,7 +338,7 @@ class SPDXLicense:
         return elem.text if elem is not None else None
 
     def __repr__(self):
-        return f"<SPDXLicense {self.id}>"
+        return f"<SPDXLicenseException {self.id}>"
 
     def __str__(self):
         return self.text_plain
