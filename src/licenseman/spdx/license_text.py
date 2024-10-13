@@ -54,7 +54,7 @@ class SPDXLicenseText:
         self,
         alts: dict[str, str] | None = None,
         optionals: bool | list[bool] = True,
-    ) -> tuple[Any, Any]:
+    ) -> Any:
         """Generate license full text and header.
 
         Parameters
@@ -69,10 +69,7 @@ class SPDXLicenseText:
         """
         self._alt = alts or {}
         self._optionals = optionals
-        fulltext = self.generate_full(self._text)
-        header = self._text.find('.//standardLicenseHeader', self._ns)
-        notice = (self.generate_notice(header)) if header else None
-        return fulltext, notice
+        return self.generate_full(self._text)
 
     def process(self, element: ET.Element) -> str:
         tag = self.clean_tag(element.tag)
@@ -183,40 +180,38 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         self._copyright: str | bool = False
         self._optionals: bool | list[bool] = True
         self._line_len: int = 88
-        self._list_item_indent: int = 1
-        self._list_item_vertical_spacing: int = 1
+        self._item_indent: int = 1
+        self._item_spacing: int = 1
         self._current_list_nesting: int = 0
         self._list_indent: int = 4
-        self._list_bullet_prefer_default: bool = True
-        self._list_bullet_ordered: bool = True
-        self._list_bullet_unordered_char: str = "–"
+        self._bullet: bool = True
         self._text_wrapper: _TextWrapper | None = None
         self._curr_bullet_len: int = 0
         self._title_centered: bool = True
-        self._title_separator_full_line: bool = True
-        self._title_separator: str = "="
-        self._subtitle_separator: str = "–"
+        self._title_underline_full: bool = True
+        self._title_underline: str = "="
+        self._subtitle_underline: str = "–"
         self._count_optional = 0
+        self._line_breaks = 2
         return
 
     def generate(
         self,
         title: str | bool = True,
-        copyright: str | bool = False,
+        copyright_notice: str | bool = False,
         optionals: bool | list[bool] = True,
         alts: dict[str, str] | None = None,
         line_length: int = 88,
-        list_indent: int = 3,
-        list_item_indent: int = 2,
-        list_item_vertical_spacing: int = 2,
-        list_bullet_prefer_default: bool = True,
-        list_bullet_ordered: bool = True,
-        list_bullet_unordered_char: str = "–",
-        title_centered: bool = True,
-        title_separator_full_line: bool = True,
-        title_separator: Literal["-", "=", "_", "*"] = "=",
-        subtitle_separator: Literal["-", "=", "_", "*"] = "-",
-    ) -> tuple[str, str | None]:
+        list_indent: int = 0,
+        item_indent: int = 1,
+        item_spacing: int = 1,
+        bullet: str | int | None = 1,
+        title_centered: bool = False,
+        title_underline: Literal["-", "=", "_", "*"] = "=",
+        title_underline_full: bool = False,
+        subtitle_underline: Literal["-", "=", "_", "*"] = "-",
+        line_breaks: int = 2,
+    ) -> str:
         """Generate plain-text license.
 
         Parameters
@@ -227,7 +222,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             and not used in matching, it can be omitted or replaced with a custom title.
             If True, the title is included as-is. If False, the title is omitted.
             If a string, the title is replaced with the custom string, if a title is present.
-        copyright
+        copyright_notice
             Determines how to treat the copyright notice, if any.
             Since the copyright notice is [optional](https://spdx.github.io/spdx-spec/v3.0.1/annexes/license-matching-guidelines-and-templates/#copyright-notice)
             and not used in matching, it can be omitted or replaced with a custom notice.
@@ -242,17 +237,25 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             The maximum line length for the plain-text output.
         list_indent
             The number of spaces separating list items from the left margin.
-        list_item_indent
+        item_indent
             The number of spaces separating list items from the bullet character.
-        list_item_vertical_spacing
+        item_spacing
             The number of newlines separating list items.
-        list_bullet_prefer_default
-            Whether to use the license's default bullet character or number for list items, if available.
-        list_bullet_ordered
-            Whether to use numbered (True) or bulleted (False) list items,
-            if no default bullet is available or `list_bullet_prefer_default` is False.
-        list_bullet_unordered_char
-            The character to use for unordered list items if `list_bullet_ordered` is False.
+        bullet
+            If `None`, the license's default bullet characters are used for list items.
+            If a string, the specified character is used.
+            If an integer, items are numbered starting from the specified number.
+        title_centered
+            Whether to center the title text.
+        title_underline
+            The character to use for underlining the title.
+            Set to `None` to disable underlining.
+        title_underline_full
+            Whether to extend the underline to the full line length.
+        subtitle_underline
+            The character to use for underlining subtitles.
+        line_breaks
+            Number of newlines to add for each <br> element.
 
         Returns
         -------
@@ -260,7 +263,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         plus the license header text, if present.
         """
         self._title = title
-        self._copyright = copyright
+        self._copyright = copyright_notice
         self._optionals = optionals
         self._line_len = line_length
         self._text_wrapper = _TextWrapper(
@@ -274,21 +277,18 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         self._curr_bullet_len = 0
         self._count_optional = 0
         self._list_indent = list_indent
-        self._list_item_indent = list_item_indent
-        self._list_item_vertical_spacing = list_item_vertical_spacing
-        self._list_bullet_prefer_default = list_bullet_prefer_default
-        self._list_bullet_ordered = list_bullet_ordered
-        self._list_bullet_unordered_char = list_bullet_unordered_char
+        self._item_indent = item_indent
+        self._item_spacing = item_spacing
+        self._bullet = bullet
         self._title_centered = title_centered
-        self._title_separator_full_line = title_separator_full_line
-        self._title_separator = title_separator
-        self._subtitle_separator = subtitle_separator
-        fulltext, notice = super().generate(alts=alts, optionals=optionals)
-        return tuple(self.finalize(text) for text in (fulltext, notice))
+        self._title_underline = title_underline
+        self._title_underline_full = title_underline_full
+        self._subtitle_underline = subtitle_underline
+        self._line_breaks = line_breaks
+        fulltext = super().generate(alts=alts, optionals=optionals)
+        return self.finalize(fulltext)
 
-    def finalize(self, text: str | None) -> str | None:
-        if text is None:
-            return
+    def finalize(self, text: str | None) -> str:
         to_wrap_section_indices = []
         cleaned_sections = [[]]
         section_breaks = [0]
@@ -367,9 +367,6 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
     def generate_full(self, text: ET.Element):
         return self.generic(text)
 
-    def generate_notice(self, standard_license_header: ET.Element):
-        return self.generic(standard_license_header)
-
     def generic(
         self,
         element: ET.Element,
@@ -416,18 +413,18 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
                     content_lines = content.strip("\n").splitlines()
                     out.append(f"{content_lines[0].strip()}\n")
                     out.extend([f"{bullet_len * " "}{line}\n" for line in content_lines[1:]])
-                    if self._subtitle_separator and len(content_lines) == 1:
+                    if self._subtitle_underline and len(content_lines) == 1:
                         num_chars = len(content_lines[0].strip()) + bullet_len
-                        out.append(f"{self._subtitle_separator * num_chars}\n\n")
+                        out.append(f"{self._subtitle_underline * num_chars}\n\n")
                     else:
                         out.append("\n\n")
             if tag_name == "bullet":
                 # There is a bullet element outside of a list item.
                 if self.element_has_tail(child):
-                    if self._subtitle_separator:
+                    if self._subtitle_underline:
                         num_chars = len(content.strip())
                         leading_spaces = (len(content) - len(content.lstrip(' '))) * " "
-                        out.append(f"{leading_spaces}{self._subtitle_separator * num_chars}\n\n")
+                        out.append(f"{leading_spaces}{self._subtitle_underline * num_chars}\n\n")
                 else:
                     # The bullet has no text after it (example: CPL-1.0);
                     # Add the next element as the list item text.
@@ -458,16 +455,16 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             line = line.strip()
             if not line:
                 continue
-            if self._title_separator and all(char in ("-", "=", "_", "*") for char in line):
+            if self._title_underline and all(char in ("-", "=", "_", "*") for char in line):
                 continue
             if self._title_centered:
                 line = line.center(self._line_len)
             title_lines.append(line)
-        if self._title_separator:
-            if self._title_separator_full_line:
-                title_lines.append(self._title_separator * self._line_len)
+        if self._title_underline:
+            if self._title_underline_full:
+                title_lines.append(self._title_underline * self._line_len)
             else:
-                separator_line = self._title_separator * max(len(line) for line in title_lines)
+                separator_line = self._title_underline * max(len(line) for line in title_lines)
                 if self._title_centered:
                     separator_line = separator_line.center(self._line_len)
                 title_lines.append(separator_line)
@@ -508,7 +505,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         self._current_list_nesting += 1
         if elem.text and elem.text.strip():
             raise ValueError("List element should not have text content")
-        if self._list_bullet_prefer_default:
+        if self._bullet:
             bullet_elems = elem.findall("./item/bullet", self._ns) + elem.findall("./item/p/bullet", self._ns)
             max_bullet_width = max([len(bullet.text.strip()) for bullet in bullet_elems], default=0)
         else:
@@ -523,7 +520,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
                 [f"{' ' * self._list_indent}{line}" for line in item_str.splitlines()])
             items.append(item_str_indented)
         self._current_list_nesting -= 1
-        newlines = max(1, self._list_item_vertical_spacing) * "\n"
+        newlines = max(1, self._item_spacing + 1) * "\n"
         list_str = newlines.join(items)
         return f"{newlines}{list_str}{newlines}"
 
@@ -532,10 +529,10 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         if len(bullet_elems) > 1:
             raise ValueError("Item element should contain at most one bullet element")
         if len(bullet_elems) == 1:
-            bullet = bullet_elems[0].text.strip() if self._list_bullet_prefer_default else (
-                f"{idx + 1}." if self._list_bullet_ordered else self._list_bullet_unordered_char
+            bullet = bullet_elems[0].text.strip() if not self._bullet else (
+                f"{idx + self._bullet}." if isinstance(self._bullet, int) else self._bullet
             )
-            bullet_post_space = max_bullet_width + self._list_item_indent - len(bullet)
+            bullet_post_space = max_bullet_width + self._item_indent - len(bullet)
             bullet += bullet_post_space * " "
             subsequent_indent = len(bullet) * " "
         else:
@@ -605,7 +602,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             paragraph_raw = " ".join(paragraph_components)
             paragraph_normalized = _re.sub(r'\s+', ' ', paragraph_raw).strip()
             paragraphs.append(self.wrap_text(paragraph_normalized))
-        return f"\n\n{"\n".join(paragraphs)}\n\n"
+        return f"\n\n{("\n" * self._line_breaks).join(paragraphs)}\n\n"
 
     def alt(self, element: ET.Element) -> str:
         """Process an <alt> element by selecting the appropriate alternative based on `self._alt`.
@@ -624,7 +621,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             raise ValueError("Bullet element should not have children")
         if not self.element_has_text(element):
             raise ValueError("Bullet element should have text content")
-        bullet = f"{element.text.strip()}{" " * self._list_item_indent}"
+        bullet = f"{element.text.strip()}{" " * self._item_indent}"
         item = f"{bullet}{element.tail.strip()}" if self.element_has_tail(element) else bullet
         return f"\n{self.process_text(item)}\n"
 
@@ -637,7 +634,7 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
             tail = self.process_text(element.tail)
         else:
             tail = ""
-        return f"\n{tail} "
+        return f"{"\n" * self._line_breaks}{tail} "
 
     def process_text(self, text: str) -> str:
         space_normalized_text = _re.sub(r'\s+', ' ', text.strip())
@@ -651,8 +648,6 @@ class SPDXLicenseTextPlain(SPDXLicenseText):
         ----------
         text : str
             The text to wrap.
-        current_indent : int
-            The current indentation level.
         """
         if self._current_list_nesting:
             extra_width = (self._current_list_nesting * self._list_indent) + self._curr_bullet_len
