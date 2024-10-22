@@ -96,12 +96,12 @@ class SPDXLicense(SPDXEntry):
         return self._data.get("standardLicenseHeaderHtml")
 
     @property
-    def header_xml(self) -> _ElementTree.Element:
+    def header_xml(self) -> _ElementTree.Element | None:
         return self._xml.find('.//standardLicenseHeader', self._ns)
 
     @property
-    def header_xml_str(self) -> str:
-        return self._xml_str(self.header_xml)
+    def header_xml_str(self) -> str | None:
+        return self._xml_str(self.header_xml) if self.header_xml else None
 
     @property
     def cross_refs(self) -> list[SPDXLicenseCrossRef]:
