@@ -17,15 +17,15 @@ namespaces = true
 # ----------------------------------------- Project Metadata -------------------------------------
 #
 [project]
-version = "0.0.0.dev43"
+version = "0.0.0.dev44"
 name = "LicenseMan"
 requires-python = ">=3.10"
 dependencies = [
-    "LoggerMan == 0.0.0.dev86",
-    "PyLinks == 0.0.0.dev69",
+    "LoggerMan == 0.0.0.dev87",
+    "PyLinks == 0.0.0.dev70",
     "PkgData == 0.0.0.dev5",
-    "PySerials == 0.0.0.dev59",
-    "MDit == 0.0.0.dev56",
-    "ExceptionMan == 0.0.0.dev56",
+    "PySerials == 0.0.0.dev60",
+    "MDit == 0.0.0.dev57",
+    "ExceptionMan == 0.0.0.dev57",
     "platformdirs >= 4.3, < 5",
 ]
