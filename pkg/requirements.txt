@@ -1,4 +1,4 @@
-LoggerMan == 0.0.0.dev93
+LoggerMan == 0.0.0.dev94
 PyLinks == 0.0.0.dev76
 PkgData == 0.0.0.dev5
 PySerials == 0.0.0.dev66
